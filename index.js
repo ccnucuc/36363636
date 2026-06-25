@@ -24,9 +24,9 @@ const kazagumo = new Kazagumo(
     [
         {
             name: 'Node1',
-            url: `${process.env.LAVALINK_HOST || 'node2.zencheap.net'}:${process.env.LAVALINK_PORT || 30087}`,
-            auth: process.env.LAVALINK_PASS || 'LeThaiAn',
-            secure: false,
+            url: 'lavalinkv4.serenetia.com:443',
+            auth: 'https://dsc.gg/ajidevserver',
+            secure: true,
         }
     ]
 );
