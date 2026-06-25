@@ -288,7 +288,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // Cần thiết để Poru hoạt động với Discord.js
-client.on('raw', (data) => poru.updateVoiceState(data));
+client.on('raw', (data) => poru.packetUpdate(data));
 
 client.once('ready', () => {
     console.log(`✅ Bot đã online: ${client.user.tag}`);
