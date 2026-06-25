@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
-const { Poru } = require('poru');
+const { Kazagumo, Payload, KazagumoTrack } = require('kazagumo');
+const { Connectors } = require('shoukaku');
 
 const client = new Client({
     intents: [
@@ -11,22 +12,24 @@ const client = new Client({
     ]
 });
 
-const nodes = [
+const kazagumo = new Kazagumo(
     {
-        name: 'Node1',
-        host: process.env.LAVALINK_HOST || 'node2.zencheap.net',
-        port: parseInt(process.env.LAVALINK_PORT) || 30087,
-        password: process.env.LAVALINK_PASS || 'LeThaiAn',
-        secure: false,
-    }
-];
-
-const poru = new Poru(client, nodes, {
-    library: 'discord.js',
-    defaultPlatform: 'ytmsearch',
-    reconnectTimeout: 5000,
-    reconnectTries: 5,
-});
+        defaultSearchEngine: 'youtube_music',
+        send: (guildId, payload) => {
+            const guild = client.guilds.cache.get(guildId);
+            if (guild) guild.shard.send(payload);
+        },
+    },
+    new Connectors.DiscordJS(client),
+    [
+        {
+            name: 'Node1',
+            url: `${process.env.LAVALINK_HOST || 'node2.zencheap.net'}:${process.env.LAVALINK_PORT || 30087}`,
+            auth: process.env.LAVALINK_PASS || 'LeThaiAn',
+            secure: false,
+        }
+    ]
+);
 
 function formatDuration(ms) {
     const s = Math.floor(ms / 1000);
@@ -38,49 +41,44 @@ function formatDuration(ms) {
         : `${m}:${String(sec).padStart(2,'0')}`;
 }
 
-// Poru events
-poru.on('nodeConnect', node => {
-    console.log(`✅ Lavalink node "${node.name}" đã kết nối!`);
-});
+kazagumo.shoukaku.on('ready', (name) => console.log(`✅ Lavalink node "${name}" đã kết nối!`));
+kazagumo.shoukaku.on('error', (name, error) => console.error(`❌ Node "${name}" lỗi:`, error.message));
+kazagumo.shoukaku.on('close', (name, code, reason) => console.warn(`⚠️ Node "${name}" đóng: ${code} ${reason}`));
+kazagumo.shoukaku.on('disconnect', (name) => console.warn(`⚠️ Node "${name}" ngắt kết nối`));
 
-poru.on('nodeError', (node, error) => {
-    console.error(`❌ Lỗi node "${node.name}":`, error.message);
-});
-
-poru.on('trackStart', (player, track) => {
-    const channel = client.channels.cache.get(player.textChannel);
+kazagumo.on('playerStart', (player, track) => {
+    const channel = client.channels.cache.get(player.textId);
     if (!channel) return;
     const embed = new EmbedBuilder()
         .setColor(0x1DB954)
         .setTitle('🎵 Đang phát')
-        .setDescription(`**[${track.info.title}](${track.info.uri})**`)
+        .setDescription(`**[${track.title}](${track.uri})**`)
         .addFields(
-            { name: 'Thời lượng', value: track.info.isStream ? 'Live' : formatDuration(track.info.length), inline: true },
-            { name: 'Tác giả', value: track.info.author || 'N/A', inline: true },
-            { name: 'Yêu cầu bởi', value: track.info.requester?.tag || 'N/A', inline: true }
+            { name: 'Thời lượng', value: track.isStream ? 'Live' : formatDuration(track.length), inline: true },
+            { name: 'Tác giả', value: track.author || 'N/A', inline: true },
+            { name: 'Yêu cầu bởi', value: track.requester?.tag || 'N/A', inline: true }
         )
-        .setThumbnail(track.info.artworkUrl || null);
+        .setThumbnail(track.thumbnail || null);
     channel.send({ embeds: [embed] });
 });
 
-poru.on('trackEnd', (player) => {
+kazagumo.on('playerEnd', (player) => {
     if (player.queue.length === 0) {
-        const channel = client.channels.cache.get(player.textChannel);
+        const channel = client.channels.cache.get(player.textId);
         channel?.send('👋 Hết nhạc trong hàng đợi!');
     }
 });
 
-poru.on('trackError', (player, track, error) => {
-    const channel = client.channels.cache.get(player.textChannel);
-    console.error('Track error:', error);
-    channel?.send(`❌ Lỗi khi phát: **${track.info.title}**`);
-    player.stop();
-});
-
-poru.on('queueEnd', (player) => {
-    const channel = client.channels.cache.get(player.textChannel);
+kazagumo.on('playerEmpty', (player) => {
+    const channel = client.channels.cache.get(player.textId);
     channel?.send('👋 Hết nhạc trong hàng đợi!');
     player.destroy();
+});
+
+kazagumo.on('playerError', (player, track, error) => {
+    const channel = client.channels.cache.get(player.textId);
+    console.error('Player error:', error);
+    channel?.send(`❌ Lỗi khi phát: **${track?.title || 'Unknown'}**`);
 });
 
 const PREFIX = process.env.PREFIX || '>';
@@ -99,39 +97,33 @@ client.on('messageCreate', async (message) => {
             if (!query) return message.reply('❌ Nhập tên bài hát hoặc URL!');
             if (!voiceChannel) return message.reply('❌ Bạn cần vào kênh voice trước!');
 
-            const player = poru.createConnection({
-                guildId: message.guild.id,
-                voiceChannel: voiceChannel.id,
-                textChannel: message.channel.id,
-                deaf: true,
-            });
-
             await message.reply('🔍 Đang tìm kiếm...');
 
-            const isUrl = /^https?:\/\//.test(query);
-            const searchQuery = isUrl ? query : `ytmsearch:${query}`;
-            const result = await poru.resolve({ query: searchQuery, requester: message.author });
-
-            if (!result || result.loadType === 'NO_MATCHES' || result.loadType === 'LOAD_FAILED') {
-                return message.reply('❌ Không tìm thấy bài hát!');
+            let player = kazagumo.players.get(message.guild.id);
+            if (!player) {
+                player = await kazagumo.createPlayer({
+                    guildId: message.guild.id,
+                    textId: message.channel.id,
+                    voiceId: voiceChannel.id,
+                    deaf: true,
+                    volume: 100,
+                });
             }
 
-            if (result.loadType === 'PLAYLIST_LOADED') {
-                for (const track of result.tracks) {
-                    track.info.requester = message.author;
-                    player.queue.add(track);
-                }
-                message.channel.send(`✅ Đã thêm playlist **${result.playlistInfo.name}** (${result.tracks.length} bài)`);
+            const result = await kazagumo.search(query, { requester: message.author });
+            if (!result || !result.tracks.length) return message.channel.send('❌ Không tìm thấy bài hát!');
+
+            if (result.type === 'PLAYLIST') {
+                for (const track of result.tracks) player.queue.add(track);
+                message.channel.send(`✅ Đã thêm playlist **${result.playlistName}** (${result.tracks.length} bài)`);
             } else {
-                const track = result.tracks[0];
-                track.info.requester = message.author;
-                player.queue.add(track);
-                if (player.isPlaying) {
-                    message.channel.send(`✅ Đã thêm vào hàng đợi: **${track.info.title}**`);
+                player.queue.add(result.tracks[0]);
+                if (player.playing || player.paused) {
+                    message.channel.send(`✅ Đã thêm vào hàng đợi: **${result.tracks[0].title}**`);
                 }
             }
 
-            if (!player.isPlaying && !player.isPaused) player.play();
+            if (!player.playing && !player.paused) await player.play();
         }
 
         // SOUNDCLOUD
@@ -140,74 +132,74 @@ client.on('messageCreate', async (message) => {
             if (!query) return message.reply('❌ Nhập tên bài hát SoundCloud!');
             if (!voiceChannel) return message.reply('❌ Bạn cần vào kênh voice trước!');
 
-            const player = poru.createConnection({
-                guildId: message.guild.id,
-                voiceChannel: voiceChannel.id,
-                textChannel: message.channel.id,
-                deaf: true,
-            });
-
             await message.reply('🔍 Đang tìm kiếm trên SoundCloud...');
-            const result = await poru.resolve({ query: `scsearch:${query}`, requester: message.author });
 
-            if (!result || result.loadType === 'NO_MATCHES' || result.loadType === 'LOAD_FAILED') {
-                return message.reply('❌ Không tìm thấy bài hát trên SoundCloud!');
+            let player = kazagumo.players.get(message.guild.id);
+            if (!player) {
+                player = await kazagumo.createPlayer({
+                    guildId: message.guild.id,
+                    textId: message.channel.id,
+                    voiceId: voiceChannel.id,
+                    deaf: true,
+                    volume: 100,
+                });
             }
 
-            const track = result.tracks[0];
-            track.info.requester = message.author;
-            player.queue.add(track);
-            if (player.isPlaying) {
-                message.channel.send(`✅ Đã thêm vào hàng đợi: **${track.info.title}**`);
+            const result = await kazagumo.search(query, { requester: message.author, engine: 'soundcloud' });
+            if (!result || !result.tracks.length) return message.channel.send('❌ Không tìm thấy bài hát trên SoundCloud!');
+
+            player.queue.add(result.tracks[0]);
+            if (player.playing || player.paused) {
+                message.channel.send(`✅ Đã thêm vào hàng đợi: **${result.tracks[0].title}**`);
             }
-            if (!player.isPlaying && !player.isPaused) player.play();
+            if (!player.playing && !player.paused) await player.play();
         }
 
         // PAUSE
         else if (command === 'pause') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Không có nhạc đang phát.');
-            if (player.isPaused) return message.reply('⏸ Nhạc đã đang tạm dừng rồi.');
-            player.pause(true);
+            if (player.paused) return message.reply('⏸ Nhạc đã tạm dừng rồi.');
+            await player.pause(true);
             message.reply('⏸ Đã tạm dừng.');
         }
 
         // RESUME
         else if (command === 'resume' || command === 'r') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Không có nhạc.');
-            if (!player.isPaused) return message.reply('▶️ Nhạc đang phát rồi.');
-            player.pause(false);
+            if (!player.paused) return message.reply('▶️ Nhạc đang phát rồi.');
+            await player.pause(false);
             message.reply('▶️ Tiếp tục phát.');
         }
 
         // SKIP
         else if (command === 'skip' || command === 's') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Không có nhạc đang phát.');
-            player.stop();
+            await player.skip();
             message.reply('⏭ Đã bỏ qua.');
         }
 
         // STOP
         else if (command === 'stop') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Bot không ở trong kênh voice.');
-            player.destroy();
+            await player.destroy();
             message.reply('⏹ Đã dừng và rời kênh voice.');
         }
 
         // QUEUE
         else if (command === 'queue' || command === 'q') {
-            const player = poru.players.get(message.guild.id);
-            if (!player || !player.currentTrack) return message.reply('❌ Không có nhạc trong hàng đợi.');
+            const player = kazagumo.players.get(message.guild.id);
+            if (!player || !player.queue.current) return message.reply('❌ Không có nhạc trong hàng đợi.');
             const songs = player.queue.slice(0, 10);
             const embed = new EmbedBuilder()
                 .setColor(0x1DB954)
                 .setTitle('📋 Hàng đợi nhạc')
                 .setDescription(
-                    `**Đang phát:** ${player.currentTrack.info.title}\n\n` +
-                    (songs.length ? songs.map((s, i) => `**${i+1}.** ${s.info.title}`).join('\n') : 'Không có bài tiếp theo.')
+                    `**Đang phát:** ${player.queue.current.title}\n\n` +
+                    (songs.length ? songs.map((s, i) => `**${i+1}.** ${s.title}`).join('\n') : 'Không có bài tiếp theo.')
                 )
                 .setFooter({ text: `Tổng: ${player.queue.length + 1} bài` });
             message.reply({ embeds: [embed] });
@@ -215,46 +207,46 @@ client.on('messageCreate', async (message) => {
 
         // NOW PLAYING
         else if (command === 'np' || command === 'nowplaying') {
-            const player = poru.players.get(message.guild.id);
-            if (!player || !player.currentTrack) return message.reply('❌ Không có nhạc đang phát.');
-            const track = player.currentTrack;
+            const player = kazagumo.players.get(message.guild.id);
+            if (!player || !player.queue.current) return message.reply('❌ Không có nhạc đang phát.');
+            const track = player.queue.current;
             const embed = new EmbedBuilder()
                 .setColor(0x1DB954)
                 .setTitle('🎵 Đang phát')
-                .setDescription(`**[${track.info.title}](${track.info.uri})**`)
+                .setDescription(`**[${track.title}](${track.uri})**`)
                 .addFields(
-                    { name: 'Thời lượng', value: track.info.isStream ? 'Live' : formatDuration(track.info.length), inline: true },
-                    { name: 'Tiến trình', value: `${formatDuration(player.position)} / ${formatDuration(track.info.length)}`, inline: true },
-                    { name: 'Tác giả', value: track.info.author || 'N/A', inline: true }
+                    { name: 'Thời lượng', value: track.isStream ? 'Live' : formatDuration(track.length), inline: true },
+                    { name: 'Tiến trình', value: `${formatDuration(player.position)} / ${formatDuration(track.length)}`, inline: true },
+                    { name: 'Tác giả', value: track.author || 'N/A', inline: true }
                 )
-                .setThumbnail(track.info.artworkUrl || null);
+                .setThumbnail(track.thumbnail || null);
             message.reply({ embeds: [embed] });
         }
 
         // VOLUME
         else if (command === 'volume' || command === 'vol') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Không có nhạc đang phát.');
             const vol = parseInt(args[0]);
             if (isNaN(vol) || vol < 0 || vol > 200) return message.reply('❌ Âm lượng hợp lệ: 0–200.');
-            player.setVolume(vol);
+            await player.setVolume(vol);
             message.reply(`🔊 Âm lượng: **${vol}%**`);
         }
 
         // LOOP
         else if (command === 'loop') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player) return message.reply('❌ Không có nhạc.');
-            const modes = ['NONE', 'TRACK', 'QUEUE'];
+            const modes = ['none', 'track', 'queue'];
             const next = modes[(modes.indexOf(player.loop) + 1) % 3];
             player.setLoop(next);
-            const labels = { NONE: '❌ Tắt', TRACK: '🔂 Lặp bài', QUEUE: '🔁 Lặp queue' };
+            const labels = { none: '❌ Tắt', track: '🔂 Lặp bài', queue: '🔁 Lặp queue' };
             message.reply(`Loop: **${labels[next]}**`);
         }
 
         // SHUFFLE
         else if (command === 'shuffle') {
-            const player = poru.players.get(message.guild.id);
+            const player = kazagumo.players.get(message.guild.id);
             if (!player || player.queue.length === 0) return message.reply('❌ Không có nhạc trong hàng đợi.');
             player.queue.shuffle();
             message.reply('🔀 Đã xáo trộn hàng đợi!');
@@ -287,13 +279,9 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Cần thiết để Poru hoạt động với Discord.js
-client.on('raw', (data) => poru.packetUpdate(data));
-
 client.once('ready', () => {
     console.log(`✅ Bot đã online: ${client.user.tag}`);
     client.user.setActivity(`${PREFIX}help`, { type: ActivityType.Listening });
-    poru.init(client);
 });
 
 client.login(process.env.DISCORD_TOKEN);

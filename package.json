@@ -8,7 +8,8 @@
   },
   "dependencies": {
     "discord.js": "^14.14.0",
-    "poru": "^4.2.2",
+    "shoukaku": "^4.0.1",
+    "kazagumo": "^3.0.0",
     "express": "^4.18.2",
     "dotenv": "^16.0.0"
   }
