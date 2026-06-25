@@ -1,7 +1,8 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
 const { DisTube } = require('distube');
 const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { SoundCloudPlugin } = require('@distube/soundcloud');
 
 const client = new Client({
     intents: [
@@ -13,9 +14,13 @@ const client = new Client({
 });
 
 const distube = new DisTube(client, {
-    plugins: [new YtDlpPlugin({ update: false })],
+    plugins: [
+        new YtDlpPlugin({ update: true }),
+        new SoundCloudPlugin(),
+    ],
     emitNewSongOnly: true,
     joinNewVoiceChannel: true,
+    nsfw: false,
 });
 
 function formatDuration(s) {
@@ -34,10 +39,11 @@ distube.on('playSong', (queue, song) => {
         .setTitle('🎵 Đang phát')
         .setDescription(`**[${song.name}](${song.url})**`)
         .addFields(
-            { name: 'Thời lượng', value: song.formattedDuration, inline: true },
+            { name: 'Thời lượng', value: song.formattedDuration || 'Live', inline: true },
+            { name: 'Nguồn', value: song.source || 'YouTube', inline: true },
             { name: 'Yêu cầu bởi', value: song.user?.tag || 'N/A', inline: true }
         )
-        .setThumbnail(song.thumbnail);
+        .setThumbnail(song.thumbnail || null);
     queue.textChannel?.send({ embeds: [embed] });
 });
 
@@ -50,19 +56,14 @@ distube.on('addList', (queue, playlist) => {
 });
 
 distube.on('error', (channel, error) => {
-    console.error('DisTube error:', error);
-    channel?.send('❌ Có lỗi xảy ra khi phát nhạc.');
+    console.error('DisTube error:', error.message);
+    channel?.send(`❌ Có lỗi xảy ra khi phát nhạc: ${error.message.slice(0, 100)}`);
 });
 
 distube.on('finish', queue => {
     queue.textChannel?.send('👋 Hết nhạc trong hàng đợi!');
 });
 
-distube.on('disconnect', queue => {
-    queue.textChannel?.send('👋 Bot đã rời kênh voice.');
-});
-
-// Prefix
 const PREFIX = process.env.PREFIX || '>';
 
 client.on('messageCreate', async (message) => {
@@ -73,10 +74,12 @@ client.on('messageCreate', async (message) => {
     const voiceChannel = message.member?.voice?.channel;
 
     try {
+        // PLAY
         if (command === 'play' || command === 'p') {
             const query = args.join(' ');
             if (!query) return message.reply('❌ Nhập tên bài hát hoặc URL!');
             if (!voiceChannel) return message.reply('❌ Bạn cần vào kênh voice trước!');
+            await message.reply('🔍 Đang tìm kiếm...');
             await distube.play(voiceChannel, query, {
                 member: message.member,
                 textChannel: message.channel,
@@ -84,6 +87,20 @@ client.on('messageCreate', async (message) => {
             });
         }
 
+        // SOUNDCLOUD
+        else if (command === 'sc') {
+            const query = args.join(' ');
+            if (!query) return message.reply('❌ Nhập tên bài hát SoundCloud!');
+            if (!voiceChannel) return message.reply('❌ Bạn cần vào kênh voice trước!');
+            await message.reply('🔍 Đang tìm kiếm trên SoundCloud...');
+            await distube.play(voiceChannel, `scsearch:${query}`, {
+                member: message.member,
+                textChannel: message.channel,
+                message
+            });
+        }
+
+        // PAUSE
         else if (command === 'pause') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc đang phát.');
@@ -91,6 +108,7 @@ client.on('messageCreate', async (message) => {
             message.reply('⏸ Đã tạm dừng.');
         }
 
+        // RESUME
         else if (command === 'resume' || command === 'r') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc.');
@@ -98,6 +116,7 @@ client.on('messageCreate', async (message) => {
             message.reply('▶️ Tiếp tục phát.');
         }
 
+        // SKIP
         else if (command === 'skip' || command === 's') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc đang phát.');
@@ -105,6 +124,7 @@ client.on('messageCreate', async (message) => {
             message.reply('⏭ Đã bỏ qua.');
         }
 
+        // STOP
         else if (command === 'stop') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Bot không ở trong kênh voice.');
@@ -112,6 +132,7 @@ client.on('messageCreate', async (message) => {
             message.reply('⏹ Đã dừng và rời kênh voice.');
         }
 
+        // QUEUE
         else if (command === 'queue' || command === 'q') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc trong hàng đợi.');
@@ -127,6 +148,7 @@ client.on('messageCreate', async (message) => {
             message.reply({ embeds: [embed] });
         }
 
+        // NOW PLAYING
         else if (command === 'np' || command === 'nowplaying') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc đang phát.');
@@ -136,13 +158,15 @@ client.on('messageCreate', async (message) => {
                 .setTitle('🎵 Đang phát')
                 .setDescription(`**[${song.name}](${song.url})**`)
                 .addFields(
-                    { name: 'Thời lượng', value: song.formattedDuration, inline: true },
-                    { name: 'Tiến trình', value: `${formatDuration(Math.floor(queue.currentTime))} / ${song.formattedDuration}`, inline: true }
+                    { name: 'Thời lượng', value: song.formattedDuration || 'Live', inline: true },
+                    { name: 'Tiến trình', value: `${formatDuration(Math.floor(queue.currentTime))} / ${song.formattedDuration}`, inline: true },
+                    { name: 'Nguồn', value: song.source || 'YouTube', inline: true }
                 )
-                .setThumbnail(song.thumbnail);
+                .setThumbnail(song.thumbnail || null);
             message.reply({ embeds: [embed] });
         }
 
+        // VOLUME
         else if (command === 'volume' || command === 'vol') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc đang phát.');
@@ -152,6 +176,7 @@ client.on('messageCreate', async (message) => {
             message.reply(`🔊 Âm lượng: **${vol}%**`);
         }
 
+        // LOOP
         else if (command === 'loop') {
             const queue = distube.getQueue(message.guild);
             if (!queue) return message.reply('❌ Không có nhạc.');
@@ -161,13 +186,23 @@ client.on('messageCreate', async (message) => {
             message.reply(`Loop: **${labels[mode]}**`);
         }
 
+        // SHUFFLE
+        else if (command === 'shuffle') {
+            const queue = distube.getQueue(message.guild);
+            if (!queue) return message.reply('❌ Không có nhạc trong hàng đợi.');
+            await queue.shuffle();
+            message.reply('🔀 Đã xáo trộn hàng đợi!');
+        }
+
+        // HELP
         else if (command === 'help') {
             const embed = new EmbedBuilder()
                 .setColor(0x5865F2)
                 .setTitle('🎶 Inferno Music - Lệnh')
                 .setDescription(`Prefix: \`${PREFIX}\``)
                 .addFields(
-                    { name: `\`${PREFIX}play <tên/url>\``, value: 'Phát nhạc hoặc thêm vào hàng đợi' },
+                    { name: `\`${PREFIX}play <tên/url>\``, value: 'Phát nhạc YouTube hoặc URL' },
+                    { name: `\`${PREFIX}sc <tên>\``, value: 'Tìm và phát nhạc SoundCloud' },
                     { name: `\`${PREFIX}pause\` / \`${PREFIX}resume\``, value: 'Tạm dừng / Tiếp tục' },
                     { name: `\`${PREFIX}skip\``, value: 'Bỏ qua bài hiện tại' },
                     { name: `\`${PREFIX}stop\``, value: 'Dừng và rời kênh voice' },
@@ -175,19 +210,20 @@ client.on('messageCreate', async (message) => {
                     { name: `\`${PREFIX}np\``, value: 'Xem bài đang phát' },
                     { name: `\`${PREFIX}volume <0-200>\``, value: 'Điều chỉnh âm lượng' },
                     { name: `\`${PREFIX}loop\``, value: 'Lặp bài / queue / tắt' },
+                    { name: `\`${PREFIX}shuffle\``, value: 'Xáo trộn hàng đợi' },
                 );
             message.reply({ embeds: [embed] });
         }
 
     } catch (e) {
         console.error(e);
-        message.reply('❌ Có lỗi xảy ra!');
+        message.reply(`❌ Có lỗi: ${e.message?.slice(0, 100) || 'Không xác định'}`);
     }
 });
 
 client.once('ready', () => {
     console.log(`✅ Bot đã online: ${client.user.tag}`);
-    client.user.setActivity(`${PREFIX}help`, { type: 2 });
+    client.user.setActivity(`${PREFIX}help`, { type: ActivityType.Listening });
 });
 
 client.login(process.env.DISCORD_TOKEN);
