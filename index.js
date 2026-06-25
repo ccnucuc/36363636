@@ -16,10 +16,7 @@ const client = new Client({
 const distube = new DisTube(client, {
     plugins: [
         new YtDlpPlugin({
-            update: true,
-            ytdlOptions: {
-                cookies: '/opt/render/project/src/cookies.txt'
-            }
+            update: false
         }),
         new SoundCloudPlugin(),
     ],

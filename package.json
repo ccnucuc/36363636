@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "build": "npm install --ignore-scripts && npx @distube/yt-dlp --version || true",
     "start": "node server.js & node index.js"
   },
   "dependencies": {
