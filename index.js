@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
 const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { LavalinkPlugin } = require('@distube/lavalink');
 const { SoundCloudPlugin } = require('@distube/soundcloud');
 
 const client = new Client({
@@ -15,8 +15,15 @@ const client = new Client({
 
 const distube = new DisTube(client, {
     plugins: [
-        new YtDlpPlugin({
-            update: false
+        new LavalinkPlugin({
+            nodes: [
+                {
+                    host: process.env.LAVALINK_HOST || 'node2.zencheap.net',
+                    port: parseInt(process.env.LAVALINK_PORT) || 30087,
+                    auth: process.env.LAVALINK_PASS || 'LeThaiAn',
+                    secure: false,
+                }
+            ],
         }),
         new SoundCloudPlugin(),
     ],

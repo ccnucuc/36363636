@@ -3,13 +3,13 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "build": "npm install --ignore-scripts && npx @distube/yt-dlp --version || true",
+    "build": "npm install --ignore-scripts",
     "start": "node server.js & node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.0",
     "distube": "^4.2.0",
-    "@distube/yt-dlp": "^1.1.3",
+    "@distube/lavalink": "^1.0.0",
     "@distube/soundcloud": "^1.3.0",
     "express": "^4.18.2",
     "dotenv": "^16.0.0"
